@@ -12,10 +12,8 @@ public:
   }
 
   void update() {
-    delay(10);
     _x = (analogRead(X) / 64 - 8);
     _x = ((_x > -3) && (_x < 3)) ? 0 : _x;
-    delay(10);
     _y = (analogRead(Y) / 64 - 8);
     _y = ((_y > -3) && (_y < 3)) ? 0 : _y;
     _trigger = digitalRead(TRIGGER);
@@ -38,14 +36,58 @@ private:
 
 class Map {
 public:
-  Map(const byte* tileMap, uint16_t width) : _tileMap(tileMap), _width(width) {}
+  Map(const byte *tiles, const byte* tileMap, uint16_t width) : _tiles(tiles), _tileMap(tileMap), _width(width) {}
 
   byte getTile(uint16_t x, uint8_t y) const { return _tileMap[(x % _width) * 6 + y]; }
+  byte getPixels(byte tile, uint8_t xOff) const { return _tiles[tile * 8 + xOff]; }
   uint16_t getWidth() { return _width; }
 
 private:
+  const byte* _tiles;
   const byte* _tileMap;
   const uint16_t _width;
+};
+
+class SpriteLayer {
+public:
+  SpriteLayer(byte* sprites, byte* spriteMasks) : _sprites(sprites), _spriteMasks(spriteMasks) {}
+
+  void reset() { memset(_spriteMap, 0xff, sizeof(_spriteMap)); }
+  void addSprite(byte sprite, uint8_t x, uint8_t y) { _spriteMap[x * 12 + y] = sprite; }
+  void add2x2Sprite(byte sprite, uint8_t x, uint8_t y) {
+    addSprite(sprite, x, y);
+    addSprite(sprite + 1, x, y + 1);
+    addSprite(sprite + 2, x + 1, y);
+    addSprite(sprite + 3, x + 1, y + 1);
+  }
+  byte getSprite(uint8_t x, uint8_t y) const { return _spriteMap[x * 12 + y]; }
+  byte maskPixels(byte inputPixels, uint8_t x, uint8_t y) const {
+    uint8_t spriteX = x >> 2;
+    uint8_t spriteY = y << 1;
+    uint8_t xOff = x & 3;
+    return maskPixels(inputPixels, getSprite(spriteX, spriteY), getSprite(spriteX, spriteY + 1), xOff);
+  }
+  byte maskPixels(byte inputPixels, byte top, byte bottom, uint8_t xOff) const {
+    if ((top != 0xff) || (bottom != 0xff)) {
+      return maskPixelsSprite(inputPixels & 0xf, top, xOff) | (maskPixelsSprite(inputPixels >> 4, bottom, xOff) << 4);
+    } else {
+      return inputPixels;
+    }
+  }
+  byte maskPixelsSprite(byte inputPixels, byte sprite, uint8_t xOff) const {
+    if (sprite != 0xff) {
+      uint16_t off = (sprite >> 1) * 4 + xOff;
+      uint8_t shift = (sprite & 1) << 2;
+      return (inputPixels & ((~_spriteMasks[off]) >> shift) | (_sprites[off] >> shift)) & 0x0f;
+    } else {
+      return inputPixels;
+    }
+  }
+
+private:
+  byte _spriteMap[21 * 12];
+  byte* _sprites;
+  byte* _spriteMasks;
 };
 
 class Display {
@@ -64,7 +106,7 @@ public:
     pinMode(RESET, OUTPUT);
   
     digitalWrite(RESET, LOW);
-    delay(500);
+    delay(10);
     digitalWrite(RESET, HIGH);
     digitalWrite(CHIP_ENABLE, LOW);
     
@@ -108,7 +150,7 @@ public:
     }
   }
 
-  void blit(uint16_t x, Map* map, byte* tiles)
+  void blit(uint16_t x, const Map* map, const SpriteLayer& spriteLayer)
   {
     digitalWrite(DATA_NOT_CONTROL, LOW);
     SPI.transfer(0x80); // x = 0
@@ -118,9 +160,11 @@ public:
       for (uint8_t xi = 0; xi < 84; ) {
         uint16_t tileX = (x + xi) >> 3;
         uint8_t xOff = ((x + xi) & 7);
-        byte* tile = &tiles[map->getTile(tileX, tileY) * 8];
+        byte tile = map->getTile(tileX, tileY);
         while ((xOff < 8) && (xi < 84)) {
-          SPI.transfer(tile[xOff]);
+          byte pixels = map->getPixels(tile, xOff);
+          pixels = spriteLayer.maskPixels(pixels, xi, tileY);
+          SPI.transfer(pixels);
           xOff++;
           xi++;
         }
@@ -135,51 +179,28 @@ private:
 };
 
 byte font[] = {
-  0x3e, 0x41, 0x41, 0x41, 0x41, 0x41, 0x3e, 0x00, 0x40, 0x44, 0x42, 0x7f,
-  0x40, 0x40, 0x40, 0x00, 0x42, 0x61, 0x51, 0x51, 0x49, 0x49, 0x46, 0x00,
-  0x22, 0x41, 0x41, 0x49, 0x49, 0x49, 0x36, 0x00, 0x10, 0x18, 0x14, 0x12,
-  0x79, 0x10, 0x10, 0x00, 0x27, 0x45, 0x45, 0x45, 0x45, 0x45, 0x39, 0x00,
-  0x3e, 0x49, 0x49, 0x49, 0x49, 0x49, 0x31, 0x00, 0x01, 0x01, 0x01, 0x71,
-  0x09, 0x05, 0x03, 0x00, 0x36, 0x49, 0x49, 0x49, 0x49, 0x49, 0x36, 0x00,
-  0x46, 0x49, 0x49, 0x49, 0x49, 0x49, 0x3e, 0x00
+#include "font.h"
 };
 
 byte sprites[] = {
-  0x3c, 0x62, 0x52, 0x57, 0x69, 0x59, 0x2e, 0x30, 0x3c, 0x62, 0x82, 0x87,
-  0x69, 0x59, 0x2e, 0x30
+#include "sprites.h"
+};
+
+byte spriteMasks[] = {
+#include "sprites.h"
 };
 
 byte tiles[] = {
-// TODO: Figure out why this doesn't work:
-//#include "tiles.h"
-  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xfc, 0x02, 0x01, 0xa1,
-  0x01, 0xa9, 0x01, 0xa9, 0x01, 0xa9, 0x01, 0xa9, 0x01, 0xa9, 0x01, 0xa9,
-  0x01, 0xa9, 0x01, 0xa9, 0x01, 0xa9, 0x52, 0xfc, 0xff, 0x00, 0x00, 0xaa,
-  0x00, 0xaa, 0x00, 0xaa, 0x00, 0xaa, 0x00, 0xaa, 0x00, 0xaa, 0x00, 0xaa,
-  0x00, 0xaa, 0x00, 0xaa, 0x00, 0xaa, 0x55, 0xff, 0x3f, 0x40, 0x80, 0xaa,
-  0xc0, 0xaa, 0xc0, 0xaa, 0xc0, 0xaa, 0xc0, 0xaa, 0xc0, 0xaa, 0xc0, 0xaa,
-  0xc0, 0xaa, 0xc0, 0xaa, 0xc0, 0xaa, 0x55, 0x3f
+#include "tiles.h"
 };
 
 const byte map1[] = {
-0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
-0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 7, 0, 0, 0, 0, 2, 5, 4, 0, 0, 0, 2, 5, 5, 0, 1, 4, 5, 5, 5, 0, 3, 5, 5, 6, 6, 0, 0, 3, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
-0, 0, 4, 4, 7, 0, 0, 0, 5, 5, 8, 0, 0, 0, 5, 5, 9, 0, 0, 0, 5, 8, 0, 0, 0, 0, 6, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 5, 0, 0, 0, 0, 2, 5, 0, 0, 1, 4, 5, 5, 0, 0, 2, 
-5, 5, 6, 0, 0, 3, 6, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 0, 0, 0, 0, 0, 8, 0, 0, 0, 0, 0, 5, 7, 0, 0, 0, 0, 5, 8, 0, 0, 0, 0, 5, 5, 4, 7, 0, 0, 5, 5, 
-5, 8, 0, 0, 5, 5, 5, 8, 0, 0, 5, 5, 5, 9, 0, 0, 5, 5, 8, 0, 0, 0, 5, 5, 9, 0, 0, 0, 5, 8, 0, 0, 0, 0, 5, 8, 0, 0, 0, 1, 5, 9, 0, 0, 0, 2, 8, 0, 0, 0, 1, 5, 8, 0, 0, 0, 2, 5, 8, 
-0, 0, 1, 5, 5, 8, 0, 0, 2, 5, 5, 8, 0, 0, 3, 5, 5, 8, 0, 0, 0, 2, 5, 8, 0, 0, 0, 2, 5, 5, 7, 0, 0, 2, 5, 5, 8, 0, 0, 3, 5, 5, 8, 0, 0, 0, 2, 5, 8, 0, 0, 0, 2, 5, 9, 0, 0, 0, 2, 
-8, 0, 0, 0, 0, 2, 8, 0, 0, 0, 0, 3, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
-0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
-0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
-0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
-0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
-0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
-0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
-0
+#include "map1.h"
 };
 
-Map maps[] = {Map(map1, sizeof(map1) / 6)};
+Map maps[] = {Map(tiles, map1, sizeof(map1) / 6)};
 Map* currentMap = &maps[0];
+SpriteLayer spriteLayer = SpriteLayer(sprites, spriteMasks);
 
 Joystick joystick = Joystick();
 Display display = Display();
@@ -199,14 +220,14 @@ void loop()
 {
   joystick.update();
   if ((joystick.getY() < 0) && (y > 0)) {
-    y -= 8;
+    y -= 4;
   } else if ((joystick.getY() > 0) && (y < 40)) {
-    y += 8;
+    y += 4;
   }
   delay(50);
   x++;
-  display.blit(x, currentMap, tiles);
-  display.blit(8, y, 8, 8, &sprites[(x << 1) & 8]);
-//  display.blit(0, tileMap, tiles);
+  spriteLayer.reset();
+  spriteLayer.add2x2Sprite(/* sprite = */ (x >> 1) & 4, 2, y / 4);
+  display.blit(x, currentMap, spriteLayer);
   x = (x > currentMap->getWidth() * 8 - 88) ? 0 : x;
 }
