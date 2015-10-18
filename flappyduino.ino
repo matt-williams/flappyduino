@@ -205,12 +205,13 @@ SpriteLayer spriteLayer = SpriteLayer(sprites, spriteMasks);
 Joystick joystick = Joystick();
 Display display = Display();
 uint16_t x = 0;
-uint8_t y = 24;
+uint8_t birdX = 8;
+uint8_t birdY = 24;
 
 void setup()
 {
-  // start serial port at 9600 bps:
-  Serial.begin(9600);
+  // TODO: Remove when debugging no longer required
+  //Serial.begin(9600);
 
   joystick.begin();
   display.begin();
@@ -219,15 +220,20 @@ void setup()
 void loop()
 {
   joystick.update();
-  if ((joystick.getY() < 0) && (y > 0)) {
-    y -= 4;
-  } else if ((joystick.getY() > 0) && (y < 40)) {
-    y += 4;
+  if ((joystick.getX() < 0) && (birdX > 0)) {
+    birdX -= 2;
+  } else if ((joystick.getX() > 0) && (birdX < 76)) {
+    birdX += 2;
+  }
+  if ((joystick.getY() < 0) && (birdY > 0)) {
+    birdY -= 2;
+  } else if ((joystick.getY() > 0) && (birdY < 40)) {
+    birdY += 2;
   }
   delay(50);
   x++;
   spriteLayer.reset();
-  spriteLayer.add2x2Sprite(/* sprite = */ (x >> 1) & 4, 2, y / 4);
+  spriteLayer.add2x2Sprite(/* sprite = */ (x >> 1) & 4, birdX / 4, birdY / 4);
   display.blit(x, currentMap, spriteLayer);
   x = (x > currentMap->getWidth() * 8 - 88) ? 0 : x;
 }
