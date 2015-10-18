@@ -1,4 +1,41 @@
+#include <avr/pgmspace.h>
 #include <SPI.h>
+
+/*const byte font[] = {
+#include "font.h"
+};*/
+
+const byte sprites[] = {
+#include "sprites.h"
+};
+
+const byte spriteMasks[] = {
+#include "sprites.mask.h"
+};
+
+const byte tiles[] = {
+#include "tiles.h"
+};
+
+const byte collisionTile[] = {
+  0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0
+};
+
+const byte map1[] = {
+#include "map1.h"
+};
+
+const byte title[] = {
+#include "title.h"
+};
+
+const byte titleMasks[] = {
+#include "title.mask.h"
+};
+
+const byte PROGMEM titleMap[] = {
+#include "title-map.h"
+};
 
 class Joystick {
 public:
@@ -16,7 +53,7 @@ public:
     _x = ((_x > -3) && (_x < 3)) ? 0 : _x;
     _y = (analogRead(Y) / 64 - 8);
     _y = ((_y > -3) && (_y < 3)) ? 0 : _y;
-    _trigger = digitalRead(TRIGGER);
+    _trigger = !digitalRead(TRIGGER);
   }
 
   int8_t getX() { return _x; }
@@ -50,15 +87,28 @@ private:
 
 class SpriteLayer {
 public:
-  SpriteLayer(byte* sprites, byte* spriteMasks) : _sprites(sprites), _spriteMasks(spriteMasks) {}
+  SpriteLayer() {}
 
-  void reset() { memset(_spriteMap, 0xff, sizeof(_spriteMap)); }
-  void addSprite(byte sprite, uint8_t x, uint8_t y) { _spriteMap[x * 12 + y] = sprite; }
+  void reset(const byte* sprites, const byte* spriteMasks) {
+    _sprites = sprites;
+    _spriteMasks = spriteMasks;
+    memset(_spriteMap, 0xff, sizeof(_spriteMap));
+  }
+  void addSprite(byte sprite, uint8_t x, uint8_t y) {
+    if ((x >= 0) && (x < 21) && (y >= 0) && (y < 12)) {
+      _spriteMap[x * 12 + y] = sprite;
+    }
+  }
   void add2x2Sprite(byte sprite, uint8_t x, uint8_t y) {
     addSprite(sprite, x, y);
     addSprite(sprite + 1, x, y + 1);
     addSprite(sprite + 2, x + 1, y);
     addSprite(sprite + 3, x + 1, y + 1);
+  }
+  void setSpriteMap(const byte PROGMEM* spriteMap) {
+    for (int ii = 0; ii < sizeof(_spriteMap); ii++) {
+      _spriteMap[ii] = pgm_read_byte_near(&spriteMap[ii]);
+    }
   }
   byte getSprite(uint8_t x, uint8_t y) const { return _spriteMap[x * 12 + y]; }
   byte maskPixels(byte inputPixels, uint8_t x, uint8_t y) const {
@@ -86,8 +136,8 @@ public:
 
 private:
   byte _spriteMap[21 * 12];
-  byte* _sprites;
-  byte* _spriteMasks;
+  const byte* _sprites;
+  const byte* _spriteMasks;
 };
 
 class Display {
@@ -178,62 +228,133 @@ private:
   const int DATA_NOT_CONTROL = 8;  
 };
 
-byte font[] = {
-#include "font.h"
-};
-
-byte sprites[] = {
-#include "sprites.h"
-};
-
-byte spriteMasks[] = {
-#include "sprites.mask.h"
-};
-
-byte tiles[] = {
-#include "tiles.h"
-};
-
-const byte map1[] = {
-#include "map1.h"
-};
-
 Map maps[] = {Map(tiles, map1, sizeof(map1) / 6)};
-Map* currentMap = &maps[0];
-SpriteLayer spriteLayer = SpriteLayer(sprites, spriteMasks);
-
 Joystick joystick = Joystick();
 Display display = Display();
-uint16_t x = 0;
-uint8_t birdX = 8;
-uint8_t birdY = 24;
+SpriteLayer spriteLayer = SpriteLayer();
+
+class Mode {
+public:
+  virtual void reset();
+  virtual void loop();
+
+  static Mode* getCurrent() { return _current; }
+  static void setCurrent(Mode* mode) {
+    _current = mode;
+    _current->reset();
+  }
+
+  static Mode* const TITLE;
+  static Mode* const GAME;
+
+private:
+  static Mode* _current;
+};
+Mode* Mode::_current = NULL;
+
+class TitleMode : public Mode {
+public:
+  TitleMode() { reset(); }
+
+  void reset() {
+    _currentMap = &maps[0];
+    _x = 0;
+  }
+  
+  void loop() {
+    joystick.update();
+    if ((joystick.getX() != 0) || (joystick.getY() != 0) || (joystick.getTrigger() != 0)) {
+      Mode::setCurrent(Mode::GAME);
+    }
+    _x++;
+    spriteLayer.reset(title, titleMasks);
+    spriteLayer.setSpriteMap(titleMap);
+    display.blit(_x, _currentMap, spriteLayer);
+    _x = (_x > _currentMap->getWidth() * 8 - 88) ? 0 : _x;
+  }
+
+private:
+  Map* _currentMap;
+  uint16_t _x;
+};
+TitleMode titleMode = TitleMode();
+Mode* const Mode::TITLE = &titleMode;
+
+class GameMode : public Mode {
+public:
+  GameMode() { reset(); }
+
+  void reset() {
+    _startCount = 12;
+    _dieCount = 0;
+    _currentMap = &maps[0];
+    _x = 0;
+    _birdX = -8;
+    _birdY = 20;
+  }
+  
+  void loop() {
+    if (_startCount > 0) {
+      if (_startCount > 4) {
+        _birdX += 4;
+      } else {
+        _birdX -= 4;
+      }
+      _startCount--;
+    } else if (_dieCount > 0) {
+      _birdY += 4;
+      _dieCount--;
+      display.setNegated((_dieCount + 3) >> 2);
+      if (_dieCount == 0) {
+        Mode::setCurrent(Mode::TITLE);
+      }
+    } else {
+      joystick.update();
+      if ((joystick.getX() < 0) && (_birdX > 0)) {
+        _birdX -= 2;
+      } else if ((joystick.getX() > 0) && (_birdX < 76)) {
+        _birdX += 2;
+      }
+      if ((joystick.getY() < 0) && (_birdY > 0)) {
+        _birdY -= 2;
+      } else if ((joystick.getY() > 0) && (_birdY < 40)) {
+        _birdY += 2;
+      }
+      _x++;
+      _x = (_x > _currentMap->getWidth() * 8 - 88) ? 0 : _x;
+      byte tile = _currentMap->getTile((_x + _birdX + 4) >> 3, (_birdY + 4) >> 3);
+      if (collisionTile[tile]) {
+        _dieCount = 12;
+      }
+    }
+    spriteLayer.reset(sprites, spriteMasks);
+    spriteLayer.add2x2Sprite(/* sprite = */ (_x >> 1) & 4, _birdX / 4, _birdY / 4);
+    display.blit(_x, _currentMap, spriteLayer);
+  }
+
+private:
+  Map* _currentMap;
+  uint16_t _startCount;
+  uint16_t _dieCount;
+  uint16_t _x;
+  uint8_t _birdX;
+  uint8_t _birdY;
+};
+GameMode gameMode = GameMode();
+Mode* const Mode::GAME = &gameMode;
 
 void setup()
 {
   // TODO: Remove when debugging no longer required
-  //Serial.begin(9600);
+  Serial.begin(9600);
 
   joystick.begin();
   display.begin();
+  Mode::setCurrent(Mode::TITLE);
 }
 
 void loop()
 {
-  joystick.update();
-  if ((joystick.getX() < 0) && (birdX > 0)) {
-    birdX -= 2;
-  } else if ((joystick.getX() > 0) && (birdX < 76)) {
-    birdX += 2;
-  }
-  if ((joystick.getY() < 0) && (birdY > 0)) {
-    birdY -= 2;
-  } else if ((joystick.getY() > 0) && (birdY < 40)) {
-    birdY += 2;
-  }
+  Mode::getCurrent()->loop();
   delay(50);
-  x++;
-  spriteLayer.reset();
-  spriteLayer.add2x2Sprite(/* sprite = */ (x >> 1) & 4, birdX / 4, birdY / 4);
-  display.blit(x, currentMap, spriteLayer);
-  x = (x > currentMap->getWidth() * 8 - 88) ? 0 : x;
 }
