@@ -187,7 +187,7 @@ byte sprites[] = {
 };
 
 byte spriteMasks[] = {
-#include "sprites.h"
+#include "sprites.mask.h"
 };
 
 byte tiles[] = {
