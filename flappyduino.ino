@@ -291,6 +291,10 @@ public:
     _x = 0;
     _birdX = -8;
     _birdY = 20;
+    for (uint8_t ii = 0; ii < MAX_BIRDS; ii++) {
+      _enemyBirdX[ii] = 248;
+      _enemyBirdY[ii] = 248;
+    }
     _score = 0;
   }
   
@@ -322,6 +326,15 @@ public:
         _birdY += 2;
       }
       _x++;
+      if (_x % 32 == 0) {
+        for (uint8_t ii = 0; ii < MAX_BIRDS; ii++) {
+          if ((_enemyBirdX[ii] == 248) && (_enemyBirdY[ii] == 248)) {
+            _enemyBirdX[ii] = 84;
+            _enemyBirdY[ii] = (_x / 64 * 7) % 48;
+            break;
+          }
+        }
+      }
       if (_x % 64 == 0) {
         _score++;
       }
@@ -332,19 +345,47 @@ public:
       }
     }
     spriteLayer.reset(sprites, spriteMasks);
-    byte birdSprite = 10 + ((_x >> 1) & 4);
-    spriteLayer.add2x2Sprite(birdSprite, _birdX / 4, _birdY / 4);
+    byte flap = ((_x >> 1) & 4);
+    spriteLayer.add2x2Sprite(10 + flap, _birdX / 4, _birdY / 4);
+    for (uint8_t ii = 0; ii < MAX_BIRDS; ii++) {
+      if ((_enemyBirdX[ii] != 248) && (_enemyBirdY[ii] != 248)) {
+        _enemyBirdX[ii]-= 2;
+        if (_x % 4 == 0) {
+          if (_enemyBirdY[ii] > _birdY) {
+            _enemyBirdY[ii]--;
+          }
+          if (_enemyBirdY[ii] < _birdY) {
+            _enemyBirdY[ii]++;
+          }
+        }
+        if (_enemyBirdX[ii] == 248) {
+          _enemyBirdY[ii] = 248;
+        }
+        if (_dieCount == 0) {
+          int16_t deltaX = _birdX - _enemyBirdX[ii];
+          int16_t deltaY = _birdY - _enemyBirdY[ii];
+          if ((deltaX > -4) && (deltaX < 4) && (deltaY > -4) && (deltaY < 4)) {
+            _dieCount = 12;
+          }
+        }
+        spriteLayer.add2x2Sprite(18 + flap, _enemyBirdX[ii] / 4, _enemyBirdY[ii] / 4);
+      }
+    }
     drawScore();
     display.blit(_x, _currentMap, spriteLayer);
   }
 
 private:
+  static const uint8_t MAX_BIRDS = 3;
+
   Map* _currentMap;
   uint16_t _startCount;
   uint16_t _dieCount;
   uint16_t _x;
   uint8_t _birdX;
   uint8_t _birdY;
+  uint8_t _enemyBirdX[MAX_BIRDS];
+  uint8_t _enemyBirdY[MAX_BIRDS];
   uint16_t _score;
 
   void drawScore() {
@@ -363,7 +404,7 @@ Mode* const Mode::GAME = &gameMode;
 void setup()
 {
   // TODO: Remove when debugging no longer required
-  Serial.begin(9600);
+  //Serial.begin(9600);
 
   joystick.begin();
   display.begin();
