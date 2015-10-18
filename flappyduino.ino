@@ -291,6 +291,7 @@ public:
     _x = 0;
     _birdX = -8;
     _birdY = 20;
+    _score = 0;
   }
   
   void loop() {
@@ -321,6 +322,9 @@ public:
         _birdY += 2;
       }
       _x++;
+      if (_x % 64 == 0) {
+        _score++;
+      }
       _x = (_x > _currentMap->getWidth() * 8 - 88) ? 0 : _x;
       byte tile = _currentMap->getTile((_x + _birdX + 4) >> 3, (_birdY + 4) >> 3);
       if (collisionTile[tile]) {
@@ -328,7 +332,9 @@ public:
       }
     }
     spriteLayer.reset(sprites, spriteMasks);
-    spriteLayer.add2x2Sprite(/* sprite = */ (_x >> 1) & 4, _birdX / 4, _birdY / 4);
+    byte birdSprite = 10 + ((_x >> 1) & 4);
+    spriteLayer.add2x2Sprite(birdSprite, _birdX / 4, _birdY / 4);
+    drawScore();
     display.blit(_x, _currentMap, spriteLayer);
   }
 
@@ -339,6 +345,17 @@ private:
   uint16_t _x;
   uint8_t _birdX;
   uint8_t _birdY;
+  uint16_t _score;
+
+  void drawScore() {
+    uint8_t scoreX = 20;
+    uint16_t score = _score;
+    do {
+      spriteLayer.addSprite(score % 10, scoreX, 11);
+      score = score / 10;
+      scoreX--;
+    } while (score > 0);
+  }
 };
 GameMode gameMode = GameMode();
 Mode* const Mode::GAME = &gameMode;
